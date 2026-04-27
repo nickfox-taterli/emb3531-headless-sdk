@@ -48,7 +48,7 @@ jobs:
 
       - name: Build all
         run: |
-          sudo ./sdk.sh all -j$(nproc)
+          sudo ./sdk.sh all
 
       - name: Verify outputs
         run: |

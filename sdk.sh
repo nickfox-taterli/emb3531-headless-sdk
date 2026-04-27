@@ -421,9 +421,9 @@ build_rootfs() {
 
     # Cleanup
     info "清理 rootfs..."
-    umount "${stage_dir}/proc" 2>/dev/null || true
-    umount "${stage_dir}/sys" 2>/dev/null || true
-    umount "${stage_dir}/dev" 2>/dev/null || true
+    umount "${stage_dir}/proc" 2>/dev/null || umount -l "${stage_dir}/proc" 2>/dev/null || true
+    umount "${stage_dir}/sys" 2>/dev/null || umount -l "${stage_dir}/sys" 2>/dev/null || true
+    umount "${stage_dir}/dev" 2>/dev/null || umount -l "${stage_dir}/dev" 2>/dev/null || true
     rm -rf "${stage_dir}/var/cache/apt"/*
     rm -rf "${stage_dir}/var/lib/apt/lists"/*
     rm -rf "${stage_dir}/var/log"/*
@@ -439,7 +439,9 @@ build_rootfs() {
     mkdir -p "$rootfs_mnt"
     mount -o loop,rw "$rootfs_img" "$rootfs_mnt"
     info "复制 rootfs..."
-    cd "${stage_dir}" && tar cf - . | tar -C "$rootfs_mnt" -xf -
+    cd "${stage_dir}" && tar cf - \
+        --exclude='./proc' --exclude='./sys' --exclude='./dev' . | \
+        tar -C "$rootfs_mnt" -xf -
     cd "$SCRIPT_DIR"
     sync
     umount "$rootfs_mnt"
@@ -742,11 +744,17 @@ do_clean() {
     warn "将删除: ${WORK_DIR}/"
     read -rp "确认? [y/N] " ans
     [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { info "已取消"; return; }
-    # Unmount anything first
+    # Unmount temp mount points
     for mnt in /tmp/emb-reborn-* /tmp/emb-shrink-* /tmp/emb-final-*; do
         umount "$mnt" 2>/dev/null || true
         rmdir "$mnt" 2>/dev/null || true
     done
+    # Unmount virtual filesystems inside staging / workspace
+    for mnt in "${WORK_DIR}"/rootfs.staging/proc "${WORK_DIR}"/rootfs.staging/sys "${WORK_DIR}"/rootfs.staging/dev; do
+        [ -d "$mnt" ] && umount -l "$mnt" 2>/dev/null || true
+    done
+    # Unmount any loop-mounted images under workspace
+    mount | grep "${WORK_DIR}" | awk '{print $3}' | sort -r | xargs -r -n1 umount -l 2>/dev/null || true
     rm -rf "${WORK_DIR}"
     info "清理完成"
 }

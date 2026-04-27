@@ -51,7 +51,7 @@ jobs:
 
       - name: Build all
         run: |
-          sudo ./sdk.sh all
+          sudo EMB_CI=1 ./sdk.sh all -j 8
 
       - name: Verify outputs
         run: |
@@ -61,15 +61,15 @@ jobs:
           echo "=== Image partition layout ==="
           sudo parted workspace/output/emb3531.img print || true
           echo "=== rootfs check ==="
-          mkdir -p /tmp/verify-rootfs
-          sudo mount -o loop,ro workspace/output/images/rootfs.img /tmp/verify-rootfs
-          echo "Hostname: $(cat /tmp/verify-rootfs/etc/hostname)"
+          mkdir -p workspace/tmp/verify-rootfs
+          sudo mount -o loop,ro workspace/output/images/rootfs.img workspace/tmp/verify-rootfs
+          echo "Hostname: $(cat workspace/tmp/verify-rootfs/etc/hostname)"
           echo "Kernel modules:"
-          ls /tmp/verify-rootfs/lib/modules/
+          ls workspace/tmp/verify-rootfs/lib/modules/
           echo "Installed packages (head):"
-          sudo chroot /tmp/verify-rootfs dpkg -l | head -30
-          sudo umount /tmp/verify-rootfs
-          rmdir /tmp/verify-rootfs
+          sudo chroot workspace/tmp/verify-rootfs dpkg -l | head -30
+          sudo umount workspace/tmp/verify-rootfs
+          rmdir workspace/tmp/verify-rootfs
 
       - name: Compress emb3531.img
         run: |

@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="${SCRIPT_DIR}/workspace"
+TMP_DIR="${WORK_DIR}/tmp"
 DOWNLOAD_DIR="${WORK_DIR}/downloads"
 OUTPUT_DIR="${WORK_DIR}/output"
 IMAGES_DIR="${OUTPUT_DIR}/images"
@@ -29,6 +30,7 @@ UBOOT_HASH="9f61fd5b80a43ae20ba115e3a2933d47d720ab82"
 KERNEL_URL="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.24.tar.xz"
 KERNEL_TAR="linux-6.18.24.tar.xz"
 KERNEL_DIR_NAME="linux-6.18.24"
+KERNEL_STAGING="${IMAGES_DIR}/kernel-staging"
 
 # --- Debian rootfs ---
 DEBIAN_SUITE="trixie"
@@ -313,6 +315,60 @@ build_kernel() {
     info "内核完成: Image + DTB + $(find "${dir}" -name '*.ko' | wc -l) 个模块"
 }
 
+# Stage kernel artifacts (Image, DTB, modules) to KERNEL_STAGING so source
+# tree can be deleted.  Called automatically in CI mode, safe to call anytime.
+stage_kernel_artifacts() {
+    local kernel_dir="${WORK_DIR}/${KERNEL_DIR_NAME}"
+    [ -d "$kernel_dir" ] || return 0
+
+    info "暂存内核编译产物到 ${KERNEL_STAGING}..."
+    mkdir -p "${KERNEL_STAGING}/dtb" "${KERNEL_STAGING}/modules"
+
+    cp "${kernel_dir}/arch/arm64/boot/Image" "${KERNEL_STAGING}/Image"
+    cp "${kernel_dir}/arch/arm64/boot/dts/rockchip/rk3399-emb3531.dtb" "${KERNEL_STAGING}/dtb/"
+
+    make -C "$kernel_dir" CROSS_COMPILE="$CROSS" ARCH="$ARCH" \
+        INSTALL_MOD_PATH="${KERNEL_STAGING}/modules" INSTALL_MOD_STRIP=1 modules_install
+    find "${KERNEL_STAGING}/modules/lib/modules" -maxdepth 2 \( -name 'build' -o -name 'source' \) -delete
+
+    info "内核产物暂存完成"
+}
+
+# Remove source trees that are no longer needed, freeing disk space for CI.
+ci_cleanup() {
+    local target="${1:-all}"
+    local freed=0
+
+    case "$target" in
+        tf-a)
+            if [ -d "${WORK_DIR}/trusted-firmware-a" ]; then
+                freed=$(du -sm "${WORK_DIR}/trusted-firmware-a" 2>/dev/null | cut -f1)
+                rm -rf "${WORK_DIR}/trusted-firmware-a"
+                info "CI 清理: TF-A 源码已删除 (~${freed}MB)"
+            fi
+            ;;
+        uboot)
+            if [ -d "${WORK_DIR}/u-boot" ]; then
+                freed=$(du -sm "${WORK_DIR}/u-boot" 2>/dev/null | cut -f1)
+                rm -rf "${WORK_DIR}/u-boot"
+                info "CI 清理: U-Boot 源码已删除 (~${freed}MB)"
+            fi
+            ;;
+        kernel)
+            if [ -d "${WORK_DIR}/${KERNEL_DIR_NAME}" ]; then
+                freed=$(du -sm "${WORK_DIR}/${KERNEL_DIR_NAME}" 2>/dev/null | cut -f1)
+                rm -rf "${WORK_DIR}/${KERNEL_DIR_NAME}"
+                info "CI 清理: 内核源码已删除 (~${freed}MB)"
+            fi
+            ;;
+        all)
+            ci_cleanup tf-a
+            ci_cleanup uboot
+            ci_cleanup kernel
+            ;;
+    esac
+}
+
 do_build() {
     mkdir -p "${IMAGES_DIR}"
     build_tf_a
@@ -322,6 +378,14 @@ do_build() {
     # Copy outputs
     cp "${WORK_DIR}/u-boot/idbloader.img" "${IMAGES_DIR}/"
     cp "${WORK_DIR}/u-boot/u-boot.itb" "${IMAGES_DIR}/"
+
+    if [ "${EMB_CI:-0}" = "1" ]; then
+        stage_kernel_artifacts
+        ci_cleanup tf-a
+        ci_cleanup uboot
+        ci_cleanup kernel
+    fi
+
     info "所有编译产物已同步到 ${IMAGES_DIR}/"
 }
 
@@ -331,6 +395,7 @@ do_build() {
 
 build_rootfs() {
     step "构建 Debian ${DEBIAN_SUITE} rootfs..."
+    mkdir -p "${TMP_DIR}"
 
     # Check prerequisites
     command -v qemu-aarch64-static >/dev/null 2>&1 || command -v qemu-aarch64 >/dev/null 2>&1 || {
@@ -340,7 +405,7 @@ build_rootfs() {
     command -v dpkg >/dev/null 2>&1 || die "需要 dpkg (在 Debian/Ubuntu 主机上构建)"
 
     local rootfs_img="${IMAGES_DIR}/rootfs.img"
-    local rootfs_mnt="/tmp/emb-reborn-rootfs"
+    local rootfs_mnt="${TMP_DIR}/emb-reborn-rootfs"
 
     # Read package list
     local pkglist
@@ -460,12 +525,22 @@ build_rootfs() {
 
 build_boot_img() {
     step "构建 boot.img..."
-    local kernel_dir="${WORK_DIR}/${KERNEL_DIR_NAME}"
+    mkdir -p "${TMP_DIR}"
     local boot_img="${IMAGES_DIR}/boot.img"
-    local boot_mnt="/tmp/emb-reborn-boot"
+    local boot_mnt="${TMP_DIR}/emb-reborn-boot"
 
-    [ -f "${kernel_dir}/arch/arm64/boot/Image" ] || die "内核 Image 缺失"
-    [ -f "${kernel_dir}/arch/arm64/boot/dts/rockchip/rk3399-emb3531.dtb" ] || die "DTB 缺失"
+    # Resolve kernel Image and DTB: prefer staging, fallback to source tree
+    local kernel_image="" kernel_dtb=""
+    if [ -f "${KERNEL_STAGING}/Image" ]; then
+        kernel_image="${KERNEL_STAGING}/Image"
+        kernel_dtb="${KERNEL_STAGING}/dtb/rk3399-emb3531.dtb"
+    else
+        local kernel_dir="${WORK_DIR}/${KERNEL_DIR_NAME}"
+        kernel_image="${kernel_dir}/arch/arm64/boot/Image"
+        kernel_dtb="${kernel_dir}/arch/arm64/boot/dts/rockchip/rk3399-emb3531.dtb"
+    fi
+    [ -f "$kernel_image" ] || die "内核 Image 缺失"
+    [ -f "$kernel_dtb" ] || die "DTB 缺失"
 
     dd if=/dev/zero of="$boot_img" bs=1M count=0 seek="$BOOT_SIZE_MB" 2>&1 | tail -1
     mkfs.ext4 -F -L boot "$boot_img" >/dev/null 2>&1
@@ -473,9 +548,9 @@ build_boot_img() {
     mkdir -p "$boot_mnt"
     mount -o loop,rw "$boot_img" "$boot_mnt"
 
-    cp "${kernel_dir}/arch/arm64/boot/Image" "${boot_mnt}/Image"
+    cp "$kernel_image" "${boot_mnt}/Image"
     mkdir -p "${boot_mnt}/dtb"
-    cp "${kernel_dir}/arch/arm64/boot/dts/rockchip/rk3399-emb3531.dtb" "${boot_mnt}/dtb/"
+    cp "$kernel_dtb" "${boot_mnt}/dtb/"
     mkdir -p "${boot_mnt}/extlinux"
     cp "${BOOT_DIR}/extlinux.conf" "${boot_mnt}/extlinux/"
 
@@ -492,8 +567,8 @@ build_boot_img() {
 
 build_image() {
     step "打包最终磁盘镜像..."
+    mkdir -p "${TMP_DIR}"
     local output_img="${OUTPUT_DIR}/emb3531.img"
-    local kernel_dir="${WORK_DIR}/${KERNEL_DIR_NAME}"
 
     # Check all inputs
     for f in idbloader.img u-boot.itb boot.img rootfs.img; do
@@ -502,14 +577,19 @@ build_image() {
 
     # Install kernel modules into rootfs
     info "安装内核模块到 rootfs..."
-    local mod_mnt="/tmp/emb-reborn-mod"
+    local mod_mnt="${TMP_DIR}/emb-reborn-mod"
     mkdir -p "$mod_mnt"
     mount -o loop,rw "${IMAGES_DIR}/rootfs.img" "$mod_mnt" || die "挂载 rootfs 失败"
 
     rm -rf "${mod_mnt}/lib/modules"/*
-    make -C "$kernel_dir" CROSS_COMPILE="$CROSS" ARCH="$ARCH" \
-        INSTALL_MOD_PATH="$mod_mnt" INSTALL_MOD_STRIP=1 modules_install
-    find "${mod_mnt}/lib/modules" -maxdepth 2 \( -name 'build' -o -name 'source' \) -delete
+    if [ -d "${KERNEL_STAGING}/modules/lib/modules" ]; then
+        cp -a "${KERNEL_STAGING}/modules/lib/modules/"* "${mod_mnt}/lib/modules/"
+    else
+        local kernel_dir="${WORK_DIR}/${KERNEL_DIR_NAME}"
+        make -C "$kernel_dir" CROSS_COMPILE="$CROSS" ARCH="$ARCH" \
+            INSTALL_MOD_PATH="$mod_mnt" INSTALL_MOD_STRIP=1 modules_install
+        find "${mod_mnt}/lib/modules" -maxdepth 2 \( -name 'build' -o -name 'source' \) -delete
+    fi
 
     # Cleanup rootfs
     rm -rf "${mod_mnt}/var/cache/apt"/* "${mod_mnt}/var/lib/apt/lists"/*
@@ -540,14 +620,14 @@ build_image() {
         dd if=/dev/zero of="$compact" bs=1M count="$compact_mb" 2>&1 | tail -1
         mkfs.ext4 -F -L rootfs "$compact" >/dev/null 2>&1
 
-        mkdir -p /tmp/emb-shrink-src /tmp/emb-shrink-dst
-        mount -o loop,ro "${IMAGES_DIR}/rootfs.img" /tmp/emb-shrink-src
-        mount -o loop,rw "$compact" /tmp/emb-shrink-dst
-        cd /tmp/emb-shrink-src && tar cf - . | tar -C /tmp/emb-shrink-dst -xf -
+        mkdir -p ${TMP_DIR}/emb-shrink-src ${TMP_DIR}/emb-shrink-dst
+        mount -o loop,ro "${IMAGES_DIR}/rootfs.img" ${TMP_DIR}/emb-shrink-src
+        mount -o loop,rw "$compact" ${TMP_DIR}/emb-shrink-dst
+        cd ${TMP_DIR}/emb-shrink-src && tar cf - . | tar -C ${TMP_DIR}/emb-shrink-dst -xf -
         cd "$SCRIPT_DIR"
         sync
-        umount /tmp/emb-shrink-src /tmp/emb-shrink-dst
-        rmdir /tmp/emb-shrink-src /tmp/emb-shrink-dst 2>/dev/null || true
+        umount ${TMP_DIR}/emb-shrink-src ${TMP_DIR}/emb-shrink-dst
+        rmdir ${TMP_DIR}/emb-shrink-src ${TMP_DIR}/emb-shrink-dst 2>/dev/null || true
         mv "$compact" "${IMAGES_DIR}/rootfs.img"
         rootfs_mb=$compact_mb
     fi
@@ -565,7 +645,7 @@ build_image() {
     local uboot_sectors=$(( (uboot_size + 511) / 512 ))
     local uboot_end=$(( UBOOT_START + uboot_sectors - 1 ))
 
-    local boot_mnt2="/tmp/emb-boot-size"
+    local boot_mnt2="${TMP_DIR}/emb-boot-size"
     mkdir -p "$boot_mnt2"
     mount -o loop,ro "${IMAGES_DIR}/boot.img" "$boot_mnt2"
     local boot_content_kb
@@ -608,15 +688,17 @@ build_image() {
 
     cleanup_loop() {
         info "清理 loop..."
-        umount "${loop_dev}p3" 2>/dev/null || true
-        umount "${loop_dev}p4" 2>/dev/null || true
-        umount /tmp/emb-final-boot-src 2>/dev/null || true
-        umount /tmp/emb-final-boot-dst 2>/dev/null || true
-        umount /tmp/emb-final-rootfs-src 2>/dev/null || true
-        umount /tmp/emb-final-rootfs-dst 2>/dev/null || true
-        losetup -d "$loop_dev" 2>/dev/null || true
-        rmdir /tmp/emb-final-boot-src /tmp/emb-final-boot-dst 2>/dev/null || true
-        rmdir /tmp/emb-final-rootfs-src /tmp/emb-final-rootfs-dst 2>/dev/null || true
+        if [ -n "${loop_dev:-}" ]; then
+            umount "${loop_dev}p3" 2>/dev/null || true
+            umount "${loop_dev}p4" 2>/dev/null || true
+            losetup -d "$loop_dev" 2>/dev/null || true
+        fi
+        umount ${TMP_DIR}/emb-final-boot-src 2>/dev/null || true
+        umount ${TMP_DIR}/emb-final-boot-dst 2>/dev/null || true
+        umount ${TMP_DIR}/emb-final-rootfs-src 2>/dev/null || true
+        umount ${TMP_DIR}/emb-final-rootfs-dst 2>/dev/null || true
+        rmdir ${TMP_DIR}/emb-final-boot-src ${TMP_DIR}/emb-final-boot-dst 2>/dev/null || true
+        rmdir ${TMP_DIR}/emb-final-rootfs-src ${TMP_DIR}/emb-final-rootfs-dst 2>/dev/null || true
     }
     trap cleanup_loop EXIT
 
@@ -654,24 +736,24 @@ build_image() {
     # Write boot
     info "写入 boot..."
     mkfs.ext4 -F -L boot "$boot_part" >/dev/null 2>&1
-    mkdir -p /tmp/emb-final-boot-dst /tmp/emb-final-boot-src
-    mount "$boot_part" /tmp/emb-final-boot-dst
-    mount -o loop,ro "${IMAGES_DIR}/boot.img" /tmp/emb-final-boot-src
-    cp -a /tmp/emb-final-boot-src/* /tmp/emb-final-boot-dst/
-    umount /tmp/emb-final-boot-src /tmp/emb-final-boot-dst
+    mkdir -p ${TMP_DIR}/emb-final-boot-dst ${TMP_DIR}/emb-final-boot-src
+    mount "$boot_part" ${TMP_DIR}/emb-final-boot-dst
+    mount -o loop,ro "${IMAGES_DIR}/boot.img" ${TMP_DIR}/emb-final-boot-src
+    cp -a ${TMP_DIR}/emb-final-boot-src/* ${TMP_DIR}/emb-final-boot-dst/
+    umount ${TMP_DIR}/emb-final-boot-src ${TMP_DIR}/emb-final-boot-dst
 
     # Write rootfs
     info "写入 rootfs..."
     mkfs.ext4 -F -L rootfs "$rootfs_part" >/dev/null 2>&1
-    mkdir -p /tmp/emb-final-rootfs-dst /tmp/emb-final-rootfs-src
-    mount "$rootfs_part" /tmp/emb-final-rootfs-dst
-    mount -o loop,ro "${IMAGES_DIR}/rootfs.img" /tmp/emb-final-rootfs-src
+    mkdir -p ${TMP_DIR}/emb-final-rootfs-dst ${TMP_DIR}/emb-final-rootfs-src
+    mount "$rootfs_part" ${TMP_DIR}/emb-final-rootfs-dst
+    mount -o loop,ro "${IMAGES_DIR}/rootfs.img" ${TMP_DIR}/emb-final-rootfs-src
     info "复制 rootfs (${rootfs_mb}MB)..."
-    cd /tmp/emb-final-rootfs-src && tar cf - . | tar -C /tmp/emb-final-rootfs-dst -xf -
+    cd ${TMP_DIR}/emb-final-rootfs-src && tar cf - . | tar -C ${TMP_DIR}/emb-final-rootfs-dst -xf -
     cd "$SCRIPT_DIR"
-    umount /tmp/emb-final-rootfs-src /tmp/emb-final-rootfs-dst
-    rmdir /tmp/emb-final-boot-dst /tmp/emb-final-boot-src 2>/dev/null || true
-    rmdir /tmp/emb-final-rootfs-dst /tmp/emb-final-rootfs-src 2>/dev/null || true
+    umount ${TMP_DIR}/emb-final-rootfs-src ${TMP_DIR}/emb-final-rootfs-dst
+    rmdir ${TMP_DIR}/emb-final-boot-dst ${TMP_DIR}/emb-final-boot-src 2>/dev/null || true
+    rmdir ${TMP_DIR}/emb-final-rootfs-dst ${TMP_DIR}/emb-final-rootfs-src 2>/dev/null || true
 
     sync
 
@@ -745,7 +827,7 @@ do_clean() {
     read -rp "确认? [y/N] " ans
     [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { info "已取消"; return; }
     # Unmount temp mount points
-    for mnt in /tmp/emb-reborn-* /tmp/emb-shrink-* /tmp/emb-final-*; do
+    for mnt in ${TMP_DIR}/emb-reborn-* ${TMP_DIR}/emb-shrink-* ${TMP_DIR}/emb-final-*; do
         umount "$mnt" 2>/dev/null || true
         rmdir "$mnt" 2>/dev/null || true
     done

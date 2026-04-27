@@ -26,6 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-aarch64-linux-gnu \
+            gcc-arm-none-eabi \
             bc bison flex libelf-dev libssl-dev \
             qemu-user-static \
             debootstrap \

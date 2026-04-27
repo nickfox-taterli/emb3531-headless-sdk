@@ -56,7 +56,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 banner() {
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════╗"
-    echo "║       EMB3531 RK3399 SDK Builder            ║"
+    echo "║       EMB3531 RK3399 SDK Builder             ║"
     echo "║       ARM64 Headless Embedded Linux          ║"
     echo "╚══════════════════════════════════════════════╝"
     echo -e "${NC}"

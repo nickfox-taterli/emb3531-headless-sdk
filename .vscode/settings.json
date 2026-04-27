@@ -1,0 +1,12 @@
+{
+  "git.autoRepositoryDetection": false,
+
+  "git.ignoredRepositories": [
+    "workspace/linux-6.18.24",
+    "workspace/u-boot",
+    "workspace/trusted-firmware-a"
+  ],
+
+  "git.detectSubmodules": false,
+  "git.ignoreSubmodules": true
+}

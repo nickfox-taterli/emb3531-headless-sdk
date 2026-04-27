@@ -23,7 +23,7 @@ ARCH="arm64"
 TF_A_REMOTE="https://github.com/TrustedFirmware-A/trusted-firmware-a.git"
 TF_A_HASH="de387341ee73d99446fbbf6a7053d7b759b8b3a6"
 
-UBOOT_REMOTE="https://source.denx.de/u-boot/u-boot.git"
+UBOOT_REMOTE="https://github.com/u-boot/u-boot.git"
 UBOOT_HASH="9f61fd5b80a43ae20ba115e3a2933d47d720ab82"
 
 KERNEL_URL="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.24.tar.xz"

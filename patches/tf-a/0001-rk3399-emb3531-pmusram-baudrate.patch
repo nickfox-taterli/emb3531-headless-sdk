@@ -1,0 +1,26 @@
+diff --git a/plat/rockchip/rk3399/include/shared/addressmap_shared.h b/plat/rockchip/rk3399/include/shared/addressmap_shared.h
+index 84a31b2..66bf0b6 100644
+--- a/plat/rockchip/rk3399/include/shared/addressmap_shared.h
++++ b/plat/rockchip/rk3399/include/shared/addressmap_shared.h
+@@ -64,7 +64,7 @@
+ #define PMUGRF_SIZE		SIZE_K(64)
+ #define SGRF_SIZE		SIZE_K(64)
+ #define PMUSRAM_SIZE		SIZE_K(64)
+-#define PMUSRAM_RSIZE		SIZE_K(8)
++#define PMUSRAM_RSIZE		SIZE_K(16)
+ #define PWM_SIZE		SIZE_K(64)
+ #define CIC_SIZE		SIZE_K(4)
+ #define DCF_SIZE		SIZE_K(4)
+diff --git a/plat/rockchip/rk3399/rk3399_def.h b/plat/rockchip/rk3399/rk3399_def.h
+index 8d6ecfb..ba83242 100644
+--- a/plat/rockchip/rk3399/rk3399_def.h
++++ b/plat/rockchip/rk3399/rk3399_def.h
+@@ -17,7 +17,7 @@
+ /**************************************************************************
+  * UART related constants
+  **************************************************************************/
+-#define RK3399_BAUDRATE			1500000
++#define RK3399_BAUDRATE			115200
+ #define RK3399_UART_CLOCK		24000000
+ 
+ /******************************************************************************

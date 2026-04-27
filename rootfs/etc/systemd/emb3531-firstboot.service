@@ -1,0 +1,13 @@
+[Unit]
+Description=EMB3531 First Boot
+After=chrony.service
+Wants=chrony.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/emb3531-firstboot.sh
+TimeoutStartSec=180
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

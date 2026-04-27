@@ -1,0 +1,2 @@
+LABEL=rootfs / ext4 errors=remount-ro 0 1
+LABEL=boot /boot ext4 noauto,nofail,x-systemd.device-timeout=1s 0 2

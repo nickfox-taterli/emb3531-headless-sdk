@@ -1,0 +1,26 @@
+EMB3531 RK3399 SDK
+==================
+
+Components:
+  TF-A:    de387341 (main)
+  U-Boot:  9f61fd5b (master)
+  Kernel:  linux-6.18.24 (vanilla tarball)
+  Rootfs:  Debian trixie (arm64)
+
+Build:
+  ./sdk.sh all         # Complete build
+  ./sdk.sh fetch       # Download sources only
+  ./sdk.sh patch       # Apply patches only
+  ./sdk.sh build       # Compile all
+  ./sdk.sh rootfs      # Build rootfs
+  ./sdk.sh image       # Package final .img
+  ./sdk.sh status      # Show build state
+  ./sdk.sh help        # Full usage
+
+Output:
+  workspace/output/emb3531.img
+
+Requirements:
+  - aarch64-linux-gnu- cross-compiler
+  - qemu-user-static (for rootfs debootstrap)
+  - debootstrap, parted, dosfstools, pv

@@ -1,0 +1,100 @@
+name: Build EMB3531 Image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout SDK
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcActions
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu \
+            bc bison flex libelf-dev libssl-dev \
+            qemu-user-static \
+            debootstrap \
+            parted \
+            dosfstools \
+            e2fsprogs \
+            pv \
+            wget \
+            gdisk \
+            kmod \
+            xz-utils \
+            locales \
+            libc-bin \
+            util-linux \
+            procps
+
+      - name: Enable binfmt for arm64
+        run: |
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+      - name: Build all
+        run: |
+          sudo ./sdk.sh all -j$(nproc)
+
+      - name: Verify outputs
+        run: |
+          echo "=== Build Artifacts ==="
+          ls -lh workspace/output/images/
+          ls -lh workspace/output/emb3531.img
+          echo "=== Image partition layout ==="
+          sudo parted workspace/output/emb3531.img print || true
+          echo "=== rootfs check ==="
+          mkdir -p /tmp/verify-rootfs
+          sudo mount -o loop,ro workspace/output/images/rootfs.img /tmp/verify-rootfs
+          echo "Hostname: $(cat /tmp/verify-rootfs/etc/hostname)"
+          echo "Kernel modules:"
+          ls /tmp/verify-rootfs/lib/modules/
+          echo "Installed packages (head):"
+          sudo chroot /tmp/verify-rootfs dpkg -l | head -30
+          sudo umount /tmp/verify-rootfs
+          rmdir /tmp/verify-rootfs
+
+      - name: Compress emb3531.img
+        run: |
+          xz -9e -T0 workspace/output/emb3531.img
+          ls -lh workspace/output/emb3531.img.xz
+
+      - name: Upload emb3531.img.xz
+        uses: actions/upload-artifact@v4
+        with:
+          name: emb3531-img
+          path: workspace/output/emb3531.img.xz
+          retention-days: 7
+
+      - name: Compress component images
+        run: |
+          cd workspace/output/images
+          for img in boot.img rootfs.img; do
+            xz -9e -T0 "$img"
+          done
+          ls -lh
+
+      - name: Upload component images
+        uses: actions/upload-artifact@v4
+        with:
+          name: component-images
+          path: |
+            workspace/output/images/idbloader.img
+            workspace/output/images/u-boot.itb
+            workspace/output/images/boot.img.xz
+            workspace/output/images/rootfs.img.xz
+          retention-days: 7

@@ -1,0 +1,12 @@
+diff --git a/arch/arm64/boot/dts/rockchip/Makefile b/arch/arm64/boot/dts/rockchip/Makefile
+index ad684e383..e7707c522 100644
+--- a/arch/arm64/boot/dts/rockchip/Makefile
++++ b/arch/arm64/boot/dts/rockchip/Makefile
+@@ -88,6 +88,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-rockpro64.dtb
+ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-rockpro64-screen.dtbo
+ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-sapphire.dtb
+ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-sapphire-excavator.dtb
++dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-emb3531.dtb
+ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399pro-rock-pi-n10.dtb
+ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3528-armsom-sige1.dtb
+ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3528-nanopi-zero2.dtb

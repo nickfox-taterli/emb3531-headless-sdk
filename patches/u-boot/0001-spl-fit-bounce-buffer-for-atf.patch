@@ -1,0 +1,105 @@
+diff --git a/common/spl/spl_fit.c b/common/spl/spl_fit.c
+index 46ebcabe..87be6ded 100644
+--- a/common/spl/spl_fit.c
++++ b/common/spl/spl_fit.c
+@@ -16,11 +16,29 @@
+ #include <sysinfo.h>
+ #include <asm/global_data.h>
+ #include <asm/io.h>
++#include <cpu_func.h>
+ #include <linux/libfdt.h>
+ #include <linux/printk.h>
++#include <linux/sizes.h>
+ 
+ DECLARE_GLOBAL_DATA_PTR;
+ 
++static ulong spl_fit_get_bounce_addr(size_t size)
++{
++	ulong addr;
++
++	/*
++	 * Keep the bounce buffer away from BL33 load area. Using
++	 * CONFIG_SYS_LOAD_ADDR here can overlap the U-Boot image itself.
++	 */
++	if (gd->ram_top > (CFG_SYS_SDRAM_BASE + SZ_16M + size))
++		addr = gd->ram_top - SZ_16M;
++	else
++		addr = CONFIG_SYS_LOAD_ADDR + SZ_16M;
++
++	return ALIGN_DOWN(addr, ARCH_DMA_MINALIGN);
++}
++
+ struct spl_fit_info {
+ 	const void *fit;	/* Pointer to a valid FIT blob */
+ 	size_t ext_data_offset;	/* Offset to FIT external data (end of FIT) */
+@@ -221,10 +239,11 @@ static int load_simple_fit(struct spl_load_info *info, ulong fit_offset,
+ 	void *load_ptr;
+ 	void *src;
+ 	ulong overhead;
+-	uint8_t image_comp = -1, type = -1;
++	uint8_t image_comp = -1, type = -1, os = -1;
+ 	const void *data;
+ 	const void *fit = ctx->fit;
+ 	bool external_data = false;
++	bool use_bounce = false;
+ 
+ 	log_debug("starting\n");
+ 	if (CONFIG_IS_ENABLED(BOOTMETH_VBE) &&
+@@ -258,6 +277,14 @@ static int load_simple_fit(struct spl_load_info *info, ulong fit_offset,
+ 		debug("%s ", genimg_get_comp_name(image_comp));
+ 	}
+ 
++	/*
++	 * For ATF payloads, read via DDR bounce buffer and then copy to target.
++	 * Some final load addresses (e.g. PMU/SRAM windows) are not reliable DMA
++	 * destinations from storage controllers.
++	 */
++	if (!fit_image_get_os(fit, node, &os) && os == IH_OS_ARM_TRUSTED_FIRMWARE)
++		use_bounce = true;
++
+ 	if (fit_image_get_load(fit, node, &load_addr)) {
+ 		if (!image_info->load_addr) {
+ 			printf("Can't load %s: No load address and no buffer\n",
+@@ -279,6 +306,7 @@ static int load_simple_fit(struct spl_load_info *info, ulong fit_offset,
+ 	if (external_data) {
+ 		ulong read_offset;
+ 		void *src_ptr;
++		ulong bounce_addr;
+ 
+ 		/* External data */
+ 		if (fit_image_get_data_size(fit, node, &len))
+@@ -291,15 +319,19 @@ static int load_simple_fit(struct spl_load_info *info, ulong fit_offset,
+ 			return 0;
+ 		}
+ 
++		overhead = get_aligned_image_overhead(info, offset);
++		size = get_aligned_image_size(info, len, offset);
++
+ 		if (spl_decompression_enabled() &&
+ 		    (image_comp == IH_COMP_GZIP || image_comp == IH_COMP_LZMA))
+-			src_ptr = map_sysmem(ALIGN(CONFIG_SYS_LOAD_ADDR, ARCH_DMA_MINALIGN), len);
+-		else
+-			src_ptr = map_sysmem(ALIGN(load_addr, ARCH_DMA_MINALIGN), len);
++			src_ptr = map_sysmem(ALIGN(CONFIG_SYS_LOAD_ADDR, ARCH_DMA_MINALIGN), size);
++		else if (use_bounce) {
++			bounce_addr = spl_fit_get_bounce_addr(size);
++			src_ptr = map_sysmem(bounce_addr, size);
++		} else
++			src_ptr = map_sysmem(ALIGN(load_addr, ARCH_DMA_MINALIGN), size);
+ 		length = len;
+ 
+-		overhead = get_aligned_image_overhead(info, offset);
+-		size = get_aligned_image_size(info, length, offset);
+ 		read_offset = fit_offset + get_aligned_image_offset(info,
+ 							    offset);
+ 		log_debug("reading from offset %x / %lx size %lx to %p: ",
+@@ -308,6 +340,9 @@ static int load_simple_fit(struct spl_load_info *info, ulong fit_offset,
+ 		if (info->read(info, read_offset, size, src_ptr) < length)
+ 			return -EIO;
+ 
++		invalidate_dcache_range(ALIGN_DOWN((ulong)src_ptr, ARCH_DMA_MINALIGN),
++					ALIGN((ulong)src_ptr + size, ARCH_DMA_MINALIGN));
++
+ 		debug("External data: dst=%p, offset=%x, size=%lx\n",
+ 		      src_ptr, offset, (unsigned long)length);
+ 		src = src_ptr + overhead;

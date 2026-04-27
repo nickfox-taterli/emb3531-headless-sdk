@@ -2,10 +2,11 @@ name: Build EMB3531 Image
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -75,28 +76,19 @@ jobs:
           xz -9e -T0 workspace/output/emb3531.img
           ls -lh workspace/output/emb3531.img.xz
 
-      - name: Upload emb3531.img.xz
-        uses: actions/upload-artifact@v4
-        with:
-          name: emb3531-img
-          path: workspace/output/emb3531.img.xz
-          retention-days: 7
-
-      - name: Compress component images
+      - name: Create release if not exists
         run: |
-          cd workspace/output/images
-          for img in boot.img rootfs.img; do
-            xz -9e -T0 "$img"
-          done
-          ls -lh
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload component images
-        uses: actions/upload-artifact@v4
-        with:
-          name: component-images
-          path: |
-            workspace/output/images/idbloader.img
-            workspace/output/images/u-boot.itb
-            workspace/output/images/boot.img.xz
-            workspace/output/images/rootfs.img.xz
-          retention-days: 7
+      - name: Upload emb3531.img.xz to GitHub Release
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            workspace/output/emb3531.img.xz \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,2 +1,12 @@
 # Build workspace
 workspace/
+
+# Agent local files (lab access, secrets)
+.agent/
+
+# Common temp files — do not track these
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
